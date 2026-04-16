@@ -17,53 +17,81 @@ function KpiCard({ label, value }) {
   )
 }
 
+function ErrorBanner({ errors }) {
+  if (!errors || errors.length === 0) return null
+  return (
+    <div style={styles.errorBanner}>
+      <strong>⚠ Erro ao carregar dados do Supabase</strong>
+      <p style={{ margin: '0.5rem 0 0.25rem', fontSize: '0.85rem' }}>
+        Verifique se as variáveis de ambiente estão configuradas na Vercel:
+      </p>
+      <code style={styles.errorCode}>
+        NEXT_PUBLIC_SUPABASE_URL<br />
+        NEXT_PUBLIC_SUPABASE_ANON_KEY
+      </code>
+      <details style={{ marginTop: '0.75rem' }}>
+        <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: '#7f1d1d' }}>Detalhes do erro</summary>
+        <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem', fontSize: '0.8rem' }}>
+          {errors.map((e, i) => <li key={i}>{e}</li>)}
+        </ul>
+      </details>
+    </div>
+  )
+}
+
+async function safeFetch(url) {
+  try {
+    const r = await fetch(url)
+    const text = await r.text()
+    let json
+    try { json = JSON.parse(text) } catch {
+      return { data: null, error: `${url}: resposta não é JSON (status ${r.status})` }
+    }
+    if (!r.ok) return { data: null, error: `${url}: ${json?.error || r.status}` }
+    return { data: json, error: null }
+  } catch (e) {
+    return { data: null, error: `${url}: ${e.message}` }
+  }
+}
+
 export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [topProducts, setTopProducts] = useState([])
   const [channels, setChannels] = useState([])
   const [recentOrders, setRecentOrders] = useState([])
+  const [errors, setErrors] = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     async function fetchAll() {
-      try {
-        const fetchJson = async (url) => {
-          const r = await fetch(url)
-          if (!r.ok) throw new Error(`${url} retornou status ${r.status}`)
-          const text = await r.text()
-          try {
-            return JSON.parse(text)
-          } catch {
-            throw new Error(`Resposta inválida de ${url}. Verifique as variáveis de ambiente do Supabase na Vercel.`)
-          }
-        }
-        const [s, tp, ch, ro] = await Promise.all([
-          fetchJson('/api/kpi-summary'),
-          fetchJson('/api/top-products'),
-          fetchJson('/api/revenue-by-channel'),
-          fetchJson('/api/recent-orders'),
-        ])
-        setSummary(s)
-        setTopProducts(Array.isArray(tp) ? tp : [])
-        setChannels(Array.isArray(ch) ? ch : [])
-        setRecentOrders(Array.isArray(ro) ? ro : [])
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
+      const [s, tp, ch, ro] = await Promise.all([
+        safeFetch('/api/kpi-summary'),
+        safeFetch('/api/top-products'),
+        safeFetch('/api/revenue-by-channel'),
+        safeFetch('/api/recent-orders'),
+      ])
+
+      const errs = [s, tp, ch, ro].map(r => r.error).filter(Boolean)
+      setErrors(errs)
+
+      if (s.data) setSummary(s.data)
+      if (tp.data) setTopProducts(Array.isArray(tp.data) ? tp.data : [])
+      if (ch.data) setChannels(Array.isArray(ch.data) ? ch.data : [])
+      if (ro.data) setRecentOrders(Array.isArray(ro.data) ? ro.data : [])
+
+      setLoading(false)
     }
     fetchAll()
   }, [])
 
   if (loading) return <div style={styles.center}>Carregando dashboard...</div>
-  if (error) return <div style={styles.center}>Erro: {error}</div>
 
   return (
     <div style={styles.page}>
       <h1 style={styles.title}>YMED Retail Analytics</h1>
       <p style={styles.subtitle}>Dashboard de KPIs — Dados sintéticos (Jan/2024 – Dez/2025)</p>
+
+      <ErrorBanner errors={errors} />
 
       {/* KPI Cards */}
       <div style={styles.grid}>
@@ -79,74 +107,86 @@ export default function Dashboard() {
 
       {/* Top 5 Produtos */}
       <h2 style={styles.sectionTitle}>Top 5 Produtos por Receita</h2>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>Produto</th>
-            <th style={styles.th}>Categoria</th>
-            <th style={styles.th}>Receita</th>
-            <th style={styles.th}>Unidades</th>
-          </tr>
-        </thead>
-        <tbody>
-          {topProducts.map((p, i) => (
-            <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
-              <td style={styles.td}>{p.product_name}</td>
-              <td style={styles.td}>{p.product_category}</td>
-              <td style={styles.td}>{fmtBRL(p.receita_liquida)}</td>
-              <td style={styles.td}>{fmt(p.unidades_vendidas)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {topProducts.length === 0
+        ? <p style={styles.emptyMsg}>Sem dados disponíveis</p>
+        : (
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Produto</th>
+                <th style={styles.th}>Categoria</th>
+                <th style={styles.th}>Receita</th>
+                <th style={styles.th}>Unidades</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topProducts.map((p, i) => (
+                <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                  <td style={styles.td}>{p.product_name}</td>
+                  <td style={styles.td}>{p.product_category}</td>
+                  <td style={styles.td}>{fmtBRL(p.receita_liquida)}</td>
+                  <td style={styles.td}>{fmt(p.unidades_vendidas)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
       {/* Receita por Canal */}
       <h2 style={styles.sectionTitle}>Receita por Canal</h2>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>Canal</th>
-            <th style={styles.th}>Pedidos</th>
-            <th style={styles.th}>Receita</th>
-          </tr>
-        </thead>
-        <tbody>
-          {channels.map((c, i) => (
-            <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
-              <td style={styles.td}>{c.channel}</td>
-              <td style={styles.td}>{fmt(c.total_pedidos)}</td>
-              <td style={styles.td}>{fmtBRL(c.receita_liquida)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {channels.length === 0
+        ? <p style={styles.emptyMsg}>Sem dados disponíveis</p>
+        : (
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Canal</th>
+                <th style={styles.th}>Pedidos</th>
+                <th style={styles.th}>Receita</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((c, i) => (
+                <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                  <td style={styles.td}>{c.channel}</td>
+                  <td style={styles.td}>{fmt(c.total_pedidos)}</td>
+                  <td style={styles.td}>{fmtBRL(c.receita_liquida)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
       {/* Pedidos Recentes */}
       <h2 style={styles.sectionTitle}>Pedidos Recentes</h2>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>ID</th>
-            <th style={styles.th}>Cliente</th>
-            <th style={styles.th}>Data</th>
-            <th style={styles.th}>Canal</th>
-            <th style={styles.th}>Valor</th>
-            <th style={styles.th}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recentOrders.map((o, i) => (
-            <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
-              <td style={styles.td}>{o.order_id}</td>
-              <td style={styles.td}>{o.customer_name}</td>
-              <td style={styles.td}>{new Date(o.order_datetime).toLocaleDateString('pt-BR')}</td>
-              <td style={styles.td}>{o.channel}</td>
-              <td style={styles.td}>{fmtBRL(o.net_amount)}</td>
-              <td style={styles.td}>{o.order_status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {recentOrders.length === 0
+        ? <p style={styles.emptyMsg}>Sem dados disponíveis</p>
+        : (
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>ID</th>
+                <th style={styles.th}>Cliente</th>
+                <th style={styles.th}>Data</th>
+                <th style={styles.th}>Canal</th>
+                <th style={styles.th}>Valor</th>
+                <th style={styles.th}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentOrders.map((o, i) => (
+                <tr key={i} style={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                  <td style={styles.td}>{o.order_id}</td>
+                  <td style={styles.td}>{o.customer_name}</td>
+                  <td style={styles.td}>{new Date(o.order_datetime).toLocaleDateString('pt-BR')}</td>
+                  <td style={styles.td}>{o.channel}</td>
+                  <td style={styles.td}>{fmtBRL(o.net_amount)}</td>
+                  <td style={styles.td}>{o.order_status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
       <footer style={styles.footer}>
         Powered by Next.js + Supabase · YMED Retail Analytics Study
@@ -170,5 +210,8 @@ const styles = {
   td:           { padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' },
   rowEven:      { background: '#fff' },
   rowOdd:       { background: '#fafafa' },
+  emptyMsg:     { color: '#999', fontStyle: 'italic', fontSize: '0.875rem', margin: '0 0 1.5rem' },
   footer:       { marginTop: '3rem', textAlign: 'center', fontSize: '0.75rem', color: '#999' },
+  errorBanner:  { background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '1rem 1.25rem', marginBottom: '1.5rem', color: '#991b1b' },
+  errorCode:    { display: 'block', background: '#fee2e2', borderRadius: 4, padding: '0.4rem 0.75rem', marginTop: '0.5rem', fontSize: '0.8rem', fontFamily: 'monospace' },
 }
