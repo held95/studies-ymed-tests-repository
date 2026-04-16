@@ -1,5 +1,11 @@
 .env
+.env.local
 credentials.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Next.js
+node_modules/
+.next/
+out/

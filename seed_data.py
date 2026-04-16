@@ -20,12 +20,28 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Conexao - tenta mysql.connector, fallback pymysql
+# Conexao - suporta MySQL (mysql.connector / pymysql) e PostgreSQL (psycopg2)
 # ---------------------------------------------------------------------------
-try:
-    import mysql.connector as db_connector
+import os as _os
 
-    def _connect(cfg):
+DB_ENGINE = "mysql"  # alterado para "postgres" via --db postgres
+
+
+def _connect(cfg):
+    if DB_ENGINE == "postgres":
+        import psycopg2  # type: ignore
+        return psycopg2.connect(
+            host=cfg["host"],
+            port=int(cfg.get("port", 5432)),
+            user=cfg["user"],
+            password=cfg["password"],
+            dbname=cfg["database"],
+            sslmode="require",
+            connect_timeout=300,
+        )
+    # MySQL: tenta mysql.connector, fallback pymysql
+    try:
+        import mysql.connector as db_connector
         return db_connector.connect(
             host=cfg["host"], port=int(cfg["port"]),
             user=cfg["user"], password=cfg["password"],
@@ -33,10 +49,8 @@ try:
             connection_timeout=300,
             autocommit=False,
         )
-except ImportError:
-    import pymysql as db_connector  # type: ignore
-
-    def _connect(cfg):
+    except ImportError:
+        import pymysql as db_connector  # type: ignore
         return db_connector.connect(
             host=cfg["host"], port=int(cfg["port"]),
             user=cfg["user"], password=cfg["password"],
@@ -818,7 +832,8 @@ class DatabaseSeeder:
     def connect(self) -> None:
         self.conn = _connect(self.config)
         self.cursor = self.conn.cursor()
-        print(f"Conectado ao MySQL {self.config['host']}:{self.config['port']}/{self.config['database']}")
+        engine = "PostgreSQL" if DB_ENGINE == "postgres" else "MySQL"
+        print(f"Conectado ao {engine} {self.config['host']}:{self.config.get('port','5432')}/{self.config['database']}")
 
     def close(self) -> None:
         if self.cursor:
@@ -838,10 +853,14 @@ class DatabaseSeeder:
             "inventory_snapshots", "order_items", "orders",
             "products", "customers", "stores",
         ]
-        self.cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-        for t in tables:
-            self.cursor.execute(f"TRUNCATE TABLE {t}")
-        self.cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        if DB_ENGINE == "postgres":
+            for t in tables:
+                self.cursor.execute(f"TRUNCATE TABLE {t} CASCADE")
+        else:
+            self.cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+            for t in tables:
+                self.cursor.execute(f"TRUNCATE TABLE {t}")
+            self.cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         self.conn.commit()
         print("  -> Todas as tabelas truncadas", flush=True)
 
@@ -954,23 +973,39 @@ class DatabaseSeeder:
 # ===================================================================
 
 def main() -> None:
+    global DB_ENGINE
     force = "--force" in sys.argv
+    DB_ENGINE = "postgres" if "--db" in sys.argv and sys.argv[sys.argv.index("--db") + 1] == "postgres" else "mysql"
 
-    # 1. Carregar .env
-    env_path = PROJECT_DIR / ".env"
-    env = load_env(env_path)
-    if not env:
-        print(f"Arquivo .env nao encontrado em {env_path}")
-        print("Execute setup_mysql_retail_analytics.py primeiro.")
-        sys.exit(1)
-
-    db_config = {
-        "host": env.get("DB_HOST", "127.0.0.1"),
-        "port": env.get("DB_PORT", "3307"),
-        "user": env.get("MYSQL_USER", env.get("DB_USER", "root")),
-        "password": env.get("MYSQL_PASSWORD", env.get("DB_PASSWORD", "")),
-        "database": env.get("MYSQL_DATABASE", env.get("DB_NAME", "retail_analytics")),
-    }
+    if DB_ENGINE == "postgres":
+        # Credenciais via variáveis de ambiente (Supabase)
+        host = _os.environ.get("SUPABASE_DB_HOST")
+        if not host:
+            print("Variavel SUPABASE_DB_HOST nao definida.")
+            print("Exemplo: export SUPABASE_DB_HOST=db.SEU_PROJETO.supabase.co")
+            sys.exit(1)
+        db_config = {
+            "host":     host,
+            "port":     _os.environ.get("SUPABASE_DB_PORT", "5432"),
+            "user":     _os.environ.get("SUPABASE_DB_USER", "postgres"),
+            "password": _os.environ.get("SUPABASE_DB_PASSWORD", ""),
+            "database": _os.environ.get("SUPABASE_DB_NAME", "postgres"),
+        }
+    else:
+        # 1. Carregar .env (MySQL local)
+        env_path = PROJECT_DIR / ".env"
+        env = load_env(env_path)
+        if not env:
+            print(f"Arquivo .env nao encontrado em {env_path}")
+            print("Execute setup_mysql_retail_analytics.py primeiro.")
+            sys.exit(1)
+        db_config = {
+            "host":     env.get("DB_HOST", "127.0.0.1"),
+            "port":     env.get("DB_PORT", "3307"),
+            "user":     env.get("MYSQL_USER", env.get("DB_USER", "root")),
+            "password": env.get("MYSQL_PASSWORD", env.get("DB_PASSWORD", "")),
+            "database": env.get("MYSQL_DATABASE", env.get("DB_NAME", "retail_analytics")),
+        }
 
     # 2. Conectar
     seeder = DatabaseSeeder(db_config)
