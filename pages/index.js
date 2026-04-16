@@ -28,16 +28,26 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchAll() {
       try {
+        const fetchJson = async (url) => {
+          const r = await fetch(url)
+          if (!r.ok) throw new Error(`${url} retornou status ${r.status}`)
+          const text = await r.text()
+          try {
+            return JSON.parse(text)
+          } catch {
+            throw new Error(`Resposta inválida de ${url}. Verifique as variáveis de ambiente do Supabase na Vercel.`)
+          }
+        }
         const [s, tp, ch, ro] = await Promise.all([
-          fetch('/api/kpi-summary').then((r) => r.json()),
-          fetch('/api/top-products').then((r) => r.json()),
-          fetch('/api/revenue-by-channel').then((r) => r.json()),
-          fetch('/api/recent-orders').then((r) => r.json()),
+          fetchJson('/api/kpi-summary'),
+          fetchJson('/api/top-products'),
+          fetchJson('/api/revenue-by-channel'),
+          fetchJson('/api/recent-orders'),
         ])
         setSummary(s)
-        setTopProducts(tp)
-        setChannels(ch)
-        setRecentOrders(ro)
+        setTopProducts(Array.isArray(tp) ? tp : [])
+        setChannels(Array.isArray(ch) ? ch : [])
+        setRecentOrders(Array.isArray(ro) ? ro : [])
       } catch (e) {
         setError(e.message)
       } finally {
